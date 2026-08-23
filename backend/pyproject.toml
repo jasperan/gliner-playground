@@ -1,0 +1,35 @@
+[project]
+name = "gliner-playground-backend"
+version = "0.1.0"
+description = "FastAPI inference backend showcasing GLiNER / GLiNER2 zero-shot information extraction"
+requires-python = ">=3.11"
+dependencies = [
+    "gliner2[local]>=1.0.0",
+    "gliner>=0.2.24",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
