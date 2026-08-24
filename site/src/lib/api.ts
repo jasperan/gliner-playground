@@ -73,7 +73,18 @@ let _backendUp: boolean | null = null;
 let _backendCheckedAt = 0;
 const BACKEND_CHECK_TTL_MS = 5000;
 
+// When served from a remote host (e.g. GitHub Pages) with no explicit
+// NEXT_PUBLIC_API_URL at build time, the baked localhost URL is unreachable —
+// skip probing entirely and run in demo mode, avoiding noisy CORS errors.
+function backendIsReachableFromHere(): boolean {
+  if (typeof window === "undefined") return true;
+  if (process.env.NEXT_PUBLIC_API_URL) return true; // explicit remote API configured
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1";
+}
+
 export async function checkBackend(): Promise<boolean> {
+  if (!backendIsReachableFromHere()) return false;
   const now = Date.now();
   if (_backendUp !== null && now - _backendCheckedAt < BACKEND_CHECK_TTL_MS) {
     return _backendUp;
