@@ -15,8 +15,6 @@ HF_HOME = os.environ.get(
 )
 os.environ.setdefault("HF_HOME", HF_HOME)
 
-_devices: Dict[str, torch.device] = {}
-
 
 @dataclasses.dataclass
 class ModelInfo:
@@ -29,62 +27,62 @@ class ModelInfo:
     note: str = ""
 
 
+_MODELS: Dict[str, ModelInfo] = {
+    "urchade/gliner_small-v2.1": ModelInfo(
+        id="urchade/gliner_small-v2.1",
+        family="gliner",
+        name="GLiNER Small v2.1",
+        params="~64M",
+        languages=["en"],
+        tasks=("ner",),
+        note="Original GLiNER, tiny and fast.",
+    ),
+    "gliner-community/gliner_medium-v2.5": ModelInfo(
+        id="gliner-community/gliner_medium-v2.5",
+        family="gliner",
+        name="GLiNER Medium v2.5",
+        params="~169M",
+        languages=["en"],
+        tasks=("ner",),
+        note="Better accuracy, still CPU-friendly.",
+    ),
+    "urchade/gliner_multi-v2.1": ModelInfo(
+        id="urchade/gliner_multi-v2.1",
+        family="gliner",
+        name="GLiNER Multi v2.1",
+        params="~169M",
+        languages=["en", "fr", "es", "de", "it", "pt", "zh", "ar", "ru", "ja", "ko", "hi", "nl"],
+        tasks=("ner",),
+        note="Multilingual zero-shot NER.",
+    ),
+    "fastino/gliner2-base-v1": ModelInfo(
+        id="fastino/gliner2-base-v1",
+        family="gliner2",
+        name="GLiNER2 Base v1",
+        params="205M",
+        languages=["en"],
+        tasks=("ner", "classification", "structured", "relations"),
+        note="Fastino's unified multi-task model.",
+    ),
+    "fastino/gliner2-multi-v1": ModelInfo(
+        id="fastino/gliner2-multi-v1",
+        family="gliner2",
+        name="GLiNER2 Multi v1",
+        params="205M",
+        languages=["fr", "en", "es", "de", "it", "pt"],
+        tasks=("ner", "classification", "structured", "relations"),
+        note="Multilingual multi-task (6 languages).",
+    ),
+}
+
 MODEL_CATALOG: Dict[str, object] = {
     "default": "fastino/gliner2-base-v1",
-    "models": {
-        "urchade/gliner_small-v2.1": ModelInfo(
-            id="urchade/gliner_small-v2.1",
-            family="gliner",
-            name="GLiNER Small v2.1",
-            params="~64M",
-            languages=["en"],
-            tasks=("ner",),
-            note="Original GLiNER, tiny and fast.",
-        ),
-        "gliner-community/gliner_medium-v2.5": ModelInfo(
-            id="gliner-community/gliner_medium-v2.5",
-            family="gliner",
-            name="GLiNER Medium v2.5",
-            params="~169M",
-            languages=["en"],
-            tasks=("ner",),
-            note="Better accuracy, still CPU-friendly.",
-        ),
-        "urchade/gliner_multi-v2.1": ModelInfo(
-            id="urchade/gliner_multi-v2.1",
-            family="gliner",
-            name="GLiNER Multi v2.1",
-            params="~169M",
-            languages=["en", "fr", "es", "de", "it", "pt", "zh", "ar", "ru", "ja", "ko", "hi", "nl"],
-            tasks=("ner",),
-            note="Multilingual zero-shot NER.",
-        ),
-        "fastino/gliner2-base-v1": ModelInfo(
-            id="fastino/gliner2-base-v1",
-            family="gliner2",
-            name="GLiNER2 Base v1",
-            params="205M",
-            languages=["en"],
-            tasks=("ner", "classification", "structured", "relations"),
-            note="Fastino's unified multi-task model.",
-        ),
-        "fastino/gliner2-multi-v1": ModelInfo(
-            id="fastino/gliner2-multi-v1",
-            family="gliner2",
-            name="GLiNER2 Multi v1",
-            params="205M",
-            languages=["fr", "en", "es", "de", "it", "pt"],
-            tasks=("ner", "classification", "structured", "relations"),
-            note="Multilingual multi-task (6 languages).",
-        ),
-    },
+    "models": _MODELS,
 }
 
 
-def _device(model_id: str) -> torch.device:
-    if model_id not in _devices:
-        _devices[model_id] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return _devices[model_id]
+def get_model_ids() -> Tuple[str, ...]:
+    return tuple(_MODELS.keys())
 
 
 class ModelBackend:
@@ -92,7 +90,7 @@ class ModelBackend:
 
     def __init__(self, model_id: str):
         self.model_id = model_id
-        self.info = MODEL_CATALOG["models"][model_id]
+        self.info = _MODELS[model_id]
         self.model = None
         self._lock = threading.Lock()
 
@@ -130,16 +128,9 @@ _loaders_lock = threading.Lock()
 
 
 def get_model(model_id: str) -> ModelBackend:
-    if model_id not in MODEL_CATALOG["models"]:
+    if model_id not in _MODELS:
         raise KeyError(f"Unknown model '{model_id}'")
     with _loaders_lock:
         if model_id not in _loaders:
             _loaders[model_id] = ModelBackend(model_id)
         return _loaders[model_id]
-
-
-def list_models() -> List[Dict[str, str]]:
-    return [
-        {"id": k, "family": v.family, "name": v.name, "params": v.params or "?"}
-        for k, v in MODEL_CATALOG["models"].items()
-    ]

@@ -36,17 +36,21 @@ function labelColor(label: string): string {
 }
 
 function HighlightedText({ text, entities }: { text: string; entities: Entity[] }) {
+  // Handle overlapping spans deterministically: sort by start asc, then by
+  // end desc (longer span wins), and skip spans nested inside an earlier one.
   const spans = entities
     .filter((e) => e.start != null && e.end != null && e.start >= 0 && e.end <= text.length && e.start < e.end)
-    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0) || (b.end ?? 0) - (a.end ?? 0));
 
   const parts: { text: string; entity?: Entity }[] = [];
   let cursor = 0;
   for (const e of spans) {
     const start = e.start ?? 0;
+    const end = e.end ?? 0;
+    if (start < cursor) continue; // overlap / nested span → skip
     if (start > cursor) parts.push({ text: text.slice(cursor, start) });
     parts.push({ text: e.text, entity: e });
-    cursor = e.end ?? 0;
+    cursor = end;
   }
   if (cursor < text.length) parts.push({ text: text.slice(cursor) });
 
@@ -83,32 +87,37 @@ export default function ZeroShotNERWidget() {
   const [runId, setRunId] = useState(0);
   const labelInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestSeq = useRef(0);
 
-  const runInference = useCallback(async (fresh = false) => {
+  const runInference = useCallback(async () => {
+    const seq = ++requestSeq.current; // only the latest request may commit state
     setLoading(true);
-    const backendUp = live || fresh ? await checkBackend() : live;
+    // checkBackend is memoized for 5s, so this is cheap even on every debounce.
     try {
-      if (backendUp) {
+      if (await checkBackend()) {
         const res = await fetchEntities(text, labels, model, threshold);
+        if (seq !== requestSeq.current) return;
         setEntities(res.entities);
         setLatency(res.latency_ms);
         setLive(true);
       } else {
         const demo = DEMO_ENTITIES(text, labels);
+        if (seq !== requestSeq.current) return;
         setEntities(demo.entities);
         setLatency(demo.latency_ms);
         setLive(false);
       }
       setRunId((r) => r + 1);
     } catch {
+      if (seq !== requestSeq.current) return;
       const demo = DEMO_ENTITIES(text, labels);
       setEntities(demo.entities);
       setLatency(demo.latency_ms);
       setLive(false);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [text, labels, model, threshold, live]);
+  }, [text, labels, model, threshold]);
 
   // Debounced auto-run whenever inputs change
   useEffect(() => {

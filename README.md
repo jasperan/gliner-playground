@@ -13,7 +13,7 @@ An interactive showcase for the **[GLiNER](https://github.com/urchade/GLiNER)** 
 | **API backend** | [`backend/`](backend/) | FastAPI service wrapping 5 GLiNER/GLiNER2 models, GPU-first with CPU fallback. Normalizes all outputs so one API speaks for both model families. |
 | **Web playground** | [`site/`](site/) | Next.js (static-export) "learn by play" guide. 8 interactive widgets that call the live backend, with graceful demo-data fallback so the static site works anywhere. |
 | **CLI examples** | [`examples/`](examples/) | 6 runnable scripts: zero-shot NER, multilingual, multi-task, PII redaction, model comparison, news→knowledge pipeline. |
-| **Tests** | [`backend/tests/`](backend/tests/) | 13 pytest cases over the API (entities, classification, structured, relations, combined, compare, benchmark). |
+| **Tests** | [`backend/tests/`](backend/tests/) | 16 pytest cases over the API (entities, entities-long, classification, structured, relations, combined, compare, benchmark, error contracts). |
 | **Deploy** | [`.github/workflows/`](.github/workflows/) | GitHub Pages action for the static site + documented backend deploy. |
 
 ## 🧠 Models bundled
@@ -89,6 +89,7 @@ All endpoints are `POST` with JSON; responses include `latency_ms`.
 | `GET /health` | liveness + device + models |
 | `GET /api/models` | model catalog with tasks/languages/params |
 | `POST /api/entities` | zero-shot NER: `{text, labels, model?, threshold?}` |
+| `POST /api/entities-long` | chunked NER for documents beyond 512 tokens (GLiNER2) |
 | `POST /api/classify` | text classification: `{text, tasks: {task: [labels]}}` |
 | `POST /api/structured` | schema-driven JSON: `{text, structures: {name: ["field::dtype::desc"]}}` |
 | `POST /api/relations` | relation extraction: `{text, relation_types}` |

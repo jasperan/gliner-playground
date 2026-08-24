@@ -5,10 +5,10 @@ treat the following as the minimum before exposing the API beyond a trusted netw
 
 ## Backend (FastAPI)
 
-- **CORS**: `backend/app/main.py` currently sets `allow_origins=["*"]` so the static
-  GitHub Pages site can call it from anywhere. Before public use, replace with the
-  explicit list of origins that should be allowed, e.g.
-  `allow_origins=["https://<user>.github.io"]`.
+- **CORS**: `backend/app/main.py` reads `GLINER_ALLOWED_ORIGINS` (comma-separated)
+  and defaults to localhost dev origins — **not** `*`. Before public use, set the
+  env var to your deployed site's origin(s), e.g.
+  `GLINER_ALLOWED_ORIGINS="https://<user>.github.io,.yourdomain.com"`.
 - **Auth**: there is no authentication. If you deploy the API publicly, put it behind
   an API key / bearer token (or a reverse proxy such as nginx/caddy with basic auth).
 - **DoS**: each request triggers model inference. Add rate limiting (e.g. `slowapi`) and

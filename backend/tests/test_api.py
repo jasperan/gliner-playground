@@ -203,3 +203,53 @@ def test_unknown_model_422(client):
         json={"text": "hi", "labels": ["x"], "model": "does/not-exist"},
     )
     assert r.status_code == 422
+
+
+def test_unknown_model_422_all_endpoints(client):
+    """Unknown model id must be a 422 on every endpoint, never a 500 (M1)."""
+    payloads = [
+        ("/api/entities", {"text": "hi", "labels": ["x"], "model": "does/not-exist"}),
+        ("/api/classify", {"text": "hi", "tasks": {"t": ["a"]}, "model": "does/not-exist"}),
+        ("/api/structured", {"text": "hi", "structures": {"s": ["f::str::d"]}, "model": "does/not-exist"}),
+        ("/api/relations", {"text": "hi", "relation_types": ["r"], "model": "does/not-exist"}),
+        ("/api/combined", {"text": "hi", "model": "does/not-exist"}),
+        ("/api/compare", {"text": "hi", "labels": ["x"], "models": ["does/not-exist"]}),
+        ("/api/benchmark", {"text": "hi", "labels": ["x"], "models": ["does/not-exist"]}),
+        ("/api/entities-long", {"text": "hi", "labels": ["x"], "model": "does/not-exist"}),
+    ]
+    for path, body in payloads:
+        r = client.post(path, json=body)
+        assert r.status_code == 422, f"{path} returned {r.status_code}, want 422"
+
+
+def test_entities_long_chunks(client):
+    """A long document is chunked and entities in the tail are still found (M2)."""
+    head = "Elon Musk founded SpaceX in 2002 in California. "
+    tail = "Later, Jeff Bezos founded Blue Origin in Washington."
+    padding = "The company expanded aggressively in the following years. " * 300
+    text = head + padding + tail
+    r = client.post(
+        "/api/entities-long",
+        json={
+            "text": text,
+            "labels": ["person", "company", "location"],
+            "model": "fastino/gliner2-base-v1",
+            "threshold": 0.4,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["chunked"] is True
+    found = {(e["label"], e["text"]) for e in body["entities"]}
+    assert ("person", "Elon Musk") in found
+    assert ("person", "Jeff Bezos") in found
+    assert ("company", "SpaceX") in found
+    assert ("company", "Blue Origin") in found
+
+
+def test_gliner_family_rejects_long(client):
+    r = client.post(
+        "/api/entities-long",
+        json={"text": "hello world", "labels": ["x"], "model": "urchade/gliner_small-v2.1"},
+    )
+    assert r.status_code == 422

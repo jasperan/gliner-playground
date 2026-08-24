@@ -57,16 +57,14 @@ export const DEMO_ENTITIES = (text: string, labels: string[]) => {
       entities.push({ label: "phone_number", text: m[0], confidence: 0.98, start: s, end: s + m[0].length });
     }
   }
-  // dedupe by (label, text)
+  // dedupe by (label, start)
   const seen = new Set<string>();
-  const unique = entities.filter((e) => {
+  return { model: "fallback-demo-data", family: "gliner2" as const, latency_ms: 42, entities: entities.filter((e) => {
     const k = `${e.label}|${e.start}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
-  });
-  void has;
-  return { model: "fallback-demo-data", family: "gliner2" as const, latency_ms: 42, entities: unique };
+  }) };
 };
 
 export const DEMO_CLASSIFY = (text: string) => {
@@ -79,12 +77,21 @@ export const DEMO_CLASSIFY = (text: string) => {
   const isTech = /laptop|iphone|phone|computer|gpu|code|software|cloud|model/.test(t);
   const isFood = /pizza|coffee|restaurant|meal|taste|food/.test(t);
   const topic = isTech ? ["tech", 0.99] : isFood ? ["food", 0.96] : ["tech", 0.6];
+  const intent =
+    /price|how much|cost|tell me|can you/.test(t)
+      ? ["request", 0.97]
+      : /refund|complaint|terrible|return/.test(t)
+        ? ["complaint", 0.95]
+        : /buy|purchase|order/.test(t)
+          ? ["purchase", 0.9]
+          : ["information", 0.85];
   return {
     model: "fallback-demo-data",
     latency_ms: 36,
     classifications: [
-      { task: "sentiment", label: sentiment[0], confidence: sentiment[1] },
-      { task: "topic", label: topic[0], confidence: topic[1] },
+      { task: "sentiment", label: sentiment[0] as string, confidence: sentiment[1] as number },
+      { task: "topic", label: topic[0] as string, confidence: topic[1] as number },
+      { task: "intent", label: intent[0] as string, confidence: intent[1] as number },
     ],
   };
 };
@@ -178,7 +185,7 @@ export const DEMO_COMPARE = () => ({
       ],
     },
     {
-      model: "uchade/gliner_multi-v2.1",
+      model: "urchade/gliner_multi-v2.1",
       family: "gliner",
       latency_ms: 201,
       entities: [
@@ -193,6 +200,15 @@ export const DEMO_COMPARE = () => ({
       entities: [
         { label: "person", text: "Tim Cook", confidence: 1.0, start: 0, end: 8 },
         { label: "company", text: "Apple", confidence: 1.0, start: 12, end: 17 },
+      ],
+    },
+    {
+      model: "fastino/gliner2-multi-v1",
+      family: "gliner2",
+      latency_ms: 84,
+      entities: [
+        { label: "person", text: "Tim Cook", confidence: 1.0, start: 0, end: 8 },
+        { label: "company", text: "Apple", confidence: 0.99, start: 12, end: 17 },
       ],
     },
   ],

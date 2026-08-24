@@ -43,9 +43,9 @@ export type ModelInfo = {
   note: string;
 };
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown, timeoutMs = 25000): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
@@ -53,20 +53,39 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null))?.detail;
+      throw new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ""}`);
+    }
     return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
   }
 }
 
+// Models may be cold (downloading weights on first request); give the
+// multi-model calls a much longer budget so a warm-up isn't mislabelled
+// as "backend unavailable" and silently swapped for demo data.
+const LONG_TIMEOUT_MS = 180000;
+
+// Short-TTL memo so widgets mounting simultaneously don't each probe /health.
+let _backendUp: boolean | null = null;
+let _backendCheckedAt = 0;
+const BACKEND_CHECK_TTL_MS = 5000;
+
 export async function checkBackend(): Promise<boolean> {
+  const now = Date.now();
+  if (_backendUp !== null && now - _backendCheckedAt < BACKEND_CHECK_TTL_MS) {
+    return _backendUp;
+  }
   try {
     const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
-    return res.ok;
+    _backendUp = res.ok;
   } catch {
-    return false;
+    _backendUp = false;
   }
+  _backendCheckedAt = Date.now();
+  return _backendUp;
 }
 
 export async function fetchEntities(
@@ -112,6 +131,15 @@ export async function fetchRelations(
   return post("/api/relations", { text, relation_types: relationTypes, model });
 }
 
+export async function fetchEntitiesLong(
+  text: string,
+  labels: string[],
+  model = "fastino/gliner2-base-v1",
+  threshold = 0.5
+): Promise<EntityResponse & { chunked: boolean; chunks: number }> {
+  return post("/api/entities-long", { text, labels, model, threshold }, LONG_TIMEOUT_MS);
+}
+
 export async function fetchCompare(
   text: string,
   labels: string[],
@@ -119,7 +147,7 @@ export async function fetchCompare(
 ): Promise<{
   results: { model: string; family: string; latency_ms: number; entities: Entity[] }[];
 }> {
-  return post("/api/compare", { text, labels, models });
+  return post("/api/compare", { text, labels, models }, LONG_TIMEOUT_MS);
 }
 
 export async function fetchBenchmark(
@@ -128,7 +156,7 @@ export async function fetchBenchmark(
   models: string[],
   iterations = 3
 ): Promise<{ results: { model: string; avg_ms: number; min_ms: number; max_ms: number }[] }> {
-  return post("/api/benchmark", { text, labels, models, iterations });
+  return post("/api/benchmark", { text, labels, models, iterations }, LONG_TIMEOUT_MS);
 }
 
 export const MODEL_IDS = {

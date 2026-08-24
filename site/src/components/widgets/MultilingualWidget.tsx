@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchEntities, checkBackend, type Entity } from "@/lib/api";
 
 type Lang = {
@@ -70,8 +70,6 @@ export default function MultilingualWidget() {
   const [results, setResults] = useState<Record<string, { label: string; text: string; confidence: number }[]>>({});
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [batchDone, setBatchDone] = useState<number[]>([]);
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const lang = LANGS[active];
 
@@ -79,35 +77,35 @@ export default function MultilingualWidget() {
     setLoading(true);
     const backendUp = await checkBackend();
     setLive(backendUp);
-    for (let i = 0; i < LANGS.length; i++) {
-      const l = LANGS[i];
-      let items: { label: string; text: string; confidence: number }[] = [];
+
+    const one = async (l: Lang) => {
       try {
         if (backendUp) {
           const res = await fetchEntities(l.text, l.labels, "fastino/gliner2-multi-v1", 0.4);
-          items = res.entities.map((e) => ({ label: e.label, text: e.text, confidence: e.confidence }));
-        } else {
-          items = Object.entries(DEMO_KNOWN[l.code]).flatMap(([label, texts]) =>
-            texts.map((text) => ({ label, text, confidence: 0.96 + Math.random() * 0.04 }))
-          );
+          return res.entities.map((e) => ({ label: e.label, text: e.text, confidence: e.confidence }));
         }
+        return Object.entries(DEMO_KNOWN[l.code]).flatMap(([label, texts]) =>
+          texts.map((text) => ({ label, text, confidence: 0.96 + Math.random() * 0.04 }))
+        );
       } catch {
-        items = Object.entries(DEMO_KNOWN[l.code]).flatMap(([label, texts]) =>
+        return Object.entries(DEMO_KNOWN[l.code]).flatMap(([label, texts]) =>
           texts.map((text) => ({ label, text, confidence: 0.95 }))
         );
       }
-      setResults((prev) => ({ ...prev, [l.code]: items }));
-      setBatchDone((prev) => [...prev, i]);
-      // reveal one language at a time for the animated effect
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    setBatchDone((done) => (done.length >= LANGS.length ? [] : done));
+    };
+
+    // Fire all six languages in parallel — no artificial sleeps, no dead state.
+    const perLang = await Promise.all(LANGS.map(one));
+    const next: Record<string, typeof perLang[0]> = {};
+    LANGS.forEach((l, i) => {
+      next[l.code] = perLang[i];
+    });
+    setResults(next);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     runAll();
-    return () => timersRef.current.forEach(clearTimeout);
   }, [runAll]);
 
   return (

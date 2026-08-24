@@ -7,15 +7,17 @@ extraction, and relation extraction — all through one normalized API.
 
 from __future__ import annotations
 
-import threading
+import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .models import get_model, list_models, MODEL_CATALOG, ModelBackend
+from .models import MODEL_CATALOG, ModelBackend, get_model
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -89,14 +91,17 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# CORS origins from env (comma-separated). Defaults are local-dev friendly; set
+# GLINER_ALLOWED_ORIGINS to your deployed site origin(s) before public hosting.
+_cors_origins = os.environ.get("GLINER_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3100,http://localhost:3200")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # demo backend; restrict in production
+    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-_lock = threading.Lock()
+_log = logging.getLogger("gliner.playground")
 
 
 @app.get("/health")
@@ -104,10 +109,13 @@ def health() -> Dict[str, Any]:
     """Basic liveness probe."""
     import torch
 
+    from .models import _loaders
+
     return {
         "status": "ok",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "models": list(MODEL_CATALOG["models"].keys()),
+        "loaded": {mid: b.model is not None for mid, b in _loaders.items()},
     }
 
 
@@ -131,9 +139,17 @@ def models() -> Dict[str, Any]:
     }
 
 
+def _resolve_model(model: str) -> ModelBackend:
+    """Resolve a model id or fail with 422 (unknown id)."""
+    try:
+        return get_model(model)
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _require_gliner2(model: str) -> ModelBackend:
-    """Load a model and fail if it can't do the requested task."""
-    backend = get_model(model)
+    """Resolve a model and fail if it can't do the requested task."""
+    backend = _resolve_model(model)
     if backend.family != "gliner2":
         raise HTTPException(
             status_code=422,
@@ -144,10 +160,7 @@ def _require_gliner2(model: str) -> ModelBackend:
 
 @app.post("/api/entities")
 def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
-    try:
-        backend = get_model(req.model)
-    except KeyError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    backend = _resolve_model(req.model)
     backend.ensure_loaded()
     t0 = time.perf_counter()
 
@@ -186,6 +199,70 @@ def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
         "family": backend.family,
         "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
         "entities": entities,
+    }
+
+
+class LongEntitiesRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=200_000, description="Long input text (chunked internally)")
+    labels: List[str] = Field(..., min_length=1, max_length=200)
+    model: str = Field(MODEL_CATALOG["default"])
+    threshold: float = Field(0.5, ge=0.0, le=1.0)
+
+
+@app.post("/api/entities-long")
+def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
+    """Chunked zero-shot NER for documents beyond the 512-token window.
+
+    gliner2's released wheel (1.3.x) does not yet expose `extract_entities_long`,
+    so we run a sliding window over the text and merge results here.
+    Only GLiNER2 models are supported; GLiNER models get a 422 with a hint.
+    """
+    backend = _require_gliner2(req.model)
+    backend.ensure_loaded()
+
+    # Chunk on ~2000-char windows with ~250-char overlap at sentence breaks so
+    # entities at chunk edges are seen twice (merged below).
+    window, overlap = 2000, 250
+    chunks: List[str] = []
+    if len(req.text) <= window:
+        chunks = [req.text]
+    else:
+        start = 0
+        while start < len(req.text):
+            end = min(start + window, len(req.text))
+            if end < len(req.text):
+                # back off to the last sentence boundary in the window
+                cut = req.text.rfind(". ", start + overlap, end)
+                if cut > start:
+                    end = cut + 1
+            chunks.append(req.text[start:end])
+            start = end - overlap if end < len(req.text) else len(req.text)
+
+    t0 = time.perf_counter()
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    for chunk in chunks:
+        raw = backend.model.extract_entities(
+            chunk, req.labels, threshold=req.threshold,
+            include_confidence=True, include_spans=True, max_len=512,
+        )
+        for label, hits in raw.get("entities", {}).items():
+            for h in hits:
+                key = (label, h.get("text"))
+                if key not in merged or h.get("confidence", 0) > merged[key]["confidence"]:
+                    merged[key] = {
+                        "label": label,
+                        "text": h.get("text"),
+                        "confidence": round(float(h.get("confidence", 0)), 6),
+                        "start": h.get("start"),
+                        "end": h.get("end"),
+                    }
+
+    return {
+        "model": req.model,
+        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+        "entities": list(merged.values()),
+        "chunked": len(chunks) > 1,
+        "chunks": len(chunks),
     }
 
 
@@ -250,7 +327,7 @@ def relations(req: RelationsRequest) -> Dict[str, Any]:
         if not isinstance(hits, list):
             continue
         for h in hits:
-            if isinstance(h, dict) and "head" in h:
+            if isinstance(h, dict) and isinstance(h.get("head"), dict) and isinstance(h.get("tail"), dict):
                 out.append({
                     "relation": rel,
                     "head": h["head"].get("text"),
@@ -306,7 +383,7 @@ def compare(req: CompareRequest) -> Dict[str, Any]:
     """Run the same NER task across several models, side by side."""
     rows = []
     for mid in req.models:
-        backend = get_model(mid)
+        backend = _resolve_model(mid)
         backend.ensure_loaded()
         t0 = time.perf_counter()
         if backend.family == "gliner2":
@@ -337,7 +414,7 @@ def benchmark(req: BenchmarkRequest) -> Dict[str, Any]:
     """Latency benchmark across models (warm cache, then iterate)."""
     out = []
     for mid in req.models:
-        backend = get_model(mid)
+        backend = _resolve_model(mid)
         backend.ensure_loaded()
         # warmup
         if backend.family == "gliner2":
@@ -361,3 +438,15 @@ def benchmark(req: BenchmarkRequest) -> Dict[str, Any]:
             "samples": times,
         })
     return {"results": out}
+
+@app.exception_handler(KeyError)
+async def key_error_handler(request, exc: KeyError):
+    """Unknown model ids anywhere surface as 422, never a raw 500."""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def unhandled_handler(request, exc: Exception):
+    """Log unhandled inference errors instead of swallowing them silently."""
+    _log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})

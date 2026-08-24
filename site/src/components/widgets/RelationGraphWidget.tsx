@@ -19,9 +19,9 @@ type Node = { id: string; label: string; kind: "person" | "org" | "place"; x: nu
 
 function layout(rels: Rel[]): { nodes: Node[]; edges: { from: number; to: number; relation: string }[] } {
   const nodeMap = new Map<string, { label: string; kind: Node["kind"] }>();
-  const add = (name: string, kind: Node["kind"], extra: string | null = null) => {
+  const add = (name: string, kind: Node["kind"]) => {
     if (!nodeMap.has(name)) {
-      nodeMap.set(name, { label: extra && name === "John" ? `${name}` : name, kind });
+      nodeMap.set(name, { label: name, kind });
     }
   };
   const edges: { from: number; to: number; relation: string }[] = [];

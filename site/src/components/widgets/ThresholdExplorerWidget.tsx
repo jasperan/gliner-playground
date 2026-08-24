@@ -12,8 +12,8 @@ const COLOR = ["text-orange-400", "text-cyan-400", "text-green-400", "text-purpl
 
 export default function ThresholdExplorerWidget() {
   const [threshold, setThreshold] = useState(0.35);
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [live, setLive] = useState(false);
+  const [candidates, setCandidates] = useState<Entity[]>([]); // full span pool at floor threshold
+  const [candidateSource, setCandidateSource] = useState<"live" | "demo">("demo");
   const [loading, setLoading] = useState(false);
   const [pulseKey, setPulseKey] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -23,32 +23,31 @@ export default function ThresholdExplorerWidget() {
     let res: Entity[];
     try {
       if (await checkBackend()) {
-        res = (await fetchEntities(FULL_TEXT, LABELS, "fastino/gliner2-base-v1", threshold)).entities;
-        setLive(true);
+        // ask the model for everything above a 0.05 floor — an honest "candidate span" pool
+        res = (await fetchEntities(FULL_TEXT, LABELS, "fastino/gliner2-base-v1", 0.05)).entities;
+        setCandidateSource("live");
       } else {
-        res = DEMO_ENTITIES(FULL_TEXT, LABELS).entities.filter((e) => e.confidence >= threshold);
-        setLive(false);
+        res = DEMO_ENTITIES(FULL_TEXT, LABELS).entities.filter((e) => e.confidence >= 0.05);
+        setCandidateSource("demo");
       }
     } catch {
-      res = DEMO_ENTITIES(FULL_TEXT, LABELS).entities.filter((e) => e.confidence >= threshold);
-      setLive(false);
+      res = DEMO_ENTITIES(FULL_TEXT, LABELS).entities.filter((e) => e.confidence >= 0.05);
+      setCandidateSource("demo");
     }
-    setEntities(res);
+    setCandidates(res);
     setPulseKey((k) => k + 1);
     setLoading(false);
-  }, [threshold]);
+  }, []);
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(run, 250);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    run();
   }, [run]);
 
-  const kept = entities.length;
-  const total = DEMO_ENTITIES(FULL_TEXT, LABELS).entities.length + 6; // demo total
-  const fromBackend = entities.length;
+  // client-side filter so the slider is instant; candidates were fetched once at floor
+  const visible = candidates.filter((e) => e.confidence >= threshold);
+  const total = candidates.length;
+  const kept = visible.length;
+  const filteredPct = total > 0 ? Math.round(((total - kept) / total) * 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -57,10 +56,11 @@ export default function ThresholdExplorerWidget() {
         <div className="ml-auto flex items-center gap-2">
           <span
             className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
-              live ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
+              candidateSource === "live" ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
             }`}
+            title={candidateSource === "live" ? "Span pool fetched live from the backend" : "Backend offline — using curated demo data"}
           >
-            {live ? "● LIVE INFERENCE" : "● DEMO DATA"}
+            {candidateSource === "live" ? "● LIVE INFERENCE" : "● DEMO DATA"}
           </span>
         </div>
       </div>
@@ -86,27 +86,27 @@ export default function ThresholdExplorerWidget() {
         </div>
         <div className="bg-muted/50 border border-border rounded-lg p-3">
           <div className={`font-mono text-2xl ${loading ? "text-muted-foreground" : "text-cyan-400"}`}>
-            {loading ? "…" : fromBackend}
+            {loading ? "…" : kept}
           </div>
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground mt-1">survive threshold</div>
         </div>
         <div className="bg-muted/50 border border-border rounded-lg p-3">
-          <div className="font-mono text-2xl text-purple-400">{Math.round(((total - fromBackend) / Math.max(total, 1)) * 100)}%</div>
+          <div className="font-mono text-2xl text-purple-400">{filteredPct}%</div>
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground mt-1">filtered out</div>
         </div>
       </div>
 
       <div key={pulseKey} className="bg-muted/50 border border-border rounded-lg p-4">
         <div className="text-[11px] font-mono text-muted-foreground mb-2">
-          WHAT SURVIVES ({kept} entities{loading ? " · refresh…" : ""})
+          WHAT SURVIVES ({kept} of {total} spans{loading ? " · refresh…" : ""})
         </div>
-        {entities.length === 0 ? (
+        {visible.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
             Nothing survives at this threshold — the model has no span confident enough.
           </p>
         ) : (
           <div className="space-y-1.5">
-            {entities.map((e, i) => (
+            {visible.map((e, i) => (
               <div key={`${e.text}-${i}`} className="flex items-center gap-2 text-sm animate-slide-in" style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}>
                 <span className={`font-mono text-xs w-20 shrink-0 ${COLOR[i % COLOR.length]}`}>{e.label}</span>
                 <span className="text-zinc-200">{e.text}</span>
@@ -114,7 +114,6 @@ export default function ThresholdExplorerWidget() {
                   <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full" style={{ width: `${e.confidence * 100}%` }} />
                 </div>
                 <span className="font-mono text-xs text-muted-foreground w-12 text-right">{(e.confidence * 100).toFixed(0)}%</span>
-                {e.confidence < threshold && <span className="text-red-400 text-xs">✕</span>}
               </div>
             ))}
           </div>
@@ -122,8 +121,8 @@ export default function ThresholdExplorerWidget() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Move the slider: <span className="text-orange-400">low</span> = recall (grab everything, risk noise),{" "}
-        <span className="text-cyan-400">high</span> = precision (only confident spans, risk misses). Production pipelines tune this per entity type.
+        The <span className="text-orange-400">candidate pool</span> here was fetched live at a 0.05 floor (every span the model will even consider); the slider keeps only the ones above it.{" "}
+        <span className="text-orange-400">low</span> = recall (grab everything, risk noise), <span className="text-cyan-400">high</span> = precision (only confident spans, risk misses). Production pipelines tune this per entity type.
       </p>
     </div>
   );
