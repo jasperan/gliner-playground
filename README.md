@@ -28,6 +28,10 @@ An interactive showcase for the **[GLiNER](https://github.com/urchade/GLiNER)** 
 
 ## 🚀 Quickstart
 
+> **Live demo:** the static learn-by-play site is deployed at
+> <https://jasperan.github.io/gliner-playground/> (runs in demo-data mode until a
+> backend is hosted — see [Deploying](#-deploying)).
+
 ### 1. Backend (inference API)
 
 ```bash

@@ -57,3 +57,13 @@
 - removed dead get_model_ids() and ThresholdExplorerWidget debounceRef
 
 Tests: 18 passing (added long-offset resolution + truncated-flag coverage)" && git log --oneline -3
+
+## Final clean review + deployment (autopilot completion)
+
+| Step | Result |
+|---|---|
+| Review cycle 3 (final) | reviewer: **APPROVE**, architect: **CLEAR** — all 5 WATCH items resolved |
+| GH Pages | enabled (build_type=workflow), workflow_run 32682060106 success (build+deploy ✓) |
+| Live URL | https://jasperan.github.io/gliner-playground/ → HTTP 200 |
+| Deployed browser check | 0 console errors, 0 failed requests, all 8 sections populated, 7 DEMO badges (correct: no hosted backend yet) |
+| Repo | jasperan/gliner-playground, 4 commits pushed (0b033c2, f602cdb, 7d66408, 9bece02) |
