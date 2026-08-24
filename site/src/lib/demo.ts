@@ -1,6 +1,8 @@
 // Curated demo results mirroring the backend API shapes. Used when the
 // FastAPI backend is offline so the static site remains fully interactive.
 
+import type { CompareRow } from "@/lib/api";
+
 export const DEMO_ENTITIES = (text: string, labels: string[]) => {
   const has = (t: string) => text.toLowerCase().includes(t.toLowerCase());
   const entities: { label: string; text: string; confidence: number; start: number; end: number }[] = [];
@@ -164,7 +166,7 @@ export const DEMO_RELATIONS = (text: string) => {
   return { model: "fallback-demo-data", latency_ms: 31, relations };
 };
 
-export const DEMO_COMPARE = () => ({
+export const DEMO_COMPARE = (): { results: CompareRow[] } => ({
   results: [
     {
       model: "urchade/gliner_small-v2.1",

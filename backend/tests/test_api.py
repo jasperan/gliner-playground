@@ -247,6 +247,51 @@ def test_entities_long_chunks(client):
     assert ("company", "Blue Origin") in found
 
 
+def test_entities_long_document_offsets(client):
+    """Merged entities carry document-space offsets + chunk_index, not chunk-local."""
+    head = "Apple CEO Tim Cook announced a product. "
+    tail = "The product was released in London."
+    padding = "Additional corporate news followed. " * 250
+    text = head + padding + tail
+    r = client.post(
+        "/api/entities-long",
+        json={
+            "text": text,
+            "labels": ["person", "company", "location"],
+            "model": "fastino/gliner2-base-v1",
+            "threshold": 0.4,
+        },
+    )
+    assert r.status_code == 200
+    entities = r.json()["entities"]
+    # every returned span must resolve against the original text
+    for e in entities:
+        if e.get("start") is not None and e.get("end") is not None:
+            assert text[e["start"]:e["end"]] == e["text"], (
+                f"offset mismatch for {e['text']}: {text[e['start']:e['end']]}"
+            )
+        assert "chunk_index" in e
+
+
+def test_entities_truncated_flag(client):
+    """/api/entities reports truncated=true when the input exceeds 512 tokens (L7)."""
+    short = "Apple CEO Tim Cook announced a product in Cupertino."
+    r = client.post(
+        "/api/entities",
+        json={"text": short, "labels": ["person"], "model": "fastino/gliner2-base-v1"},
+    )
+    assert r.status_code == 200
+    assert r.json()["truncated"] is False
+
+    long_text = ("The company keeps expanding globally. " * 500)
+    r = client.post(
+        "/api/entities",
+        json={"text": long_text, "labels": ["person"], "model": "fastino/gliner2-base-v1"},
+    )
+    assert r.status_code == 200
+    assert r.json()["truncated"] is True
+
+
 def test_gliner_family_rejects_long(client):
     r = client.post(
         "/api/entities-long",

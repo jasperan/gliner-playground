@@ -164,6 +164,16 @@ def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
     backend.ensure_loaded()
     t0 = time.perf_counter()
 
+    # Honest truncation signal: report when the input exceeds the 512-token
+    # window the model actually sees, instead of silently dropping the tail.
+    truncated = False
+    try:
+        tokenizer = getattr(getattr(backend.model, "processor", None), "tokenizer", None)
+        if tokenizer is not None and req.text:
+            truncated = len(tokenizer.encode(req.text, add_special_tokens=False)) > 512
+    except Exception:  # pragma: no cover — tokenizer is best-effort
+        truncated = False
+
     if backend.family == "gliner2":
         raw = backend.model.extract_entities(
             req.text, req.labels, threshold=req.threshold,
@@ -199,6 +209,8 @@ def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
         "family": backend.family,
         "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
         "entities": entities,
+        "truncated": truncated,
+        "max_len": 512,
     }
 
 
@@ -221,11 +233,12 @@ def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
     backend.ensure_loaded()
 
     # Chunk on ~2000-char windows with ~250-char overlap at sentence breaks so
-    # entities at chunk edges are seen twice (merged below).
+    # entities at chunk edges are seen twice (merged below). Each chunk records
+    # its base offset so merged entities carry DOCUMENT-space coordinates.
     window, overlap = 2000, 250
-    chunks: List[str] = []
+    chunks: List[tuple] = []  # (text, base_offset)
     if len(req.text) <= window:
-        chunks = [req.text]
+        chunks = [(req.text, 0)]
     else:
         start = 0
         while start < len(req.text):
@@ -235,26 +248,32 @@ def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
                 cut = req.text.rfind(". ", start + overlap, end)
                 if cut > start:
                     end = cut + 1
-            chunks.append(req.text[start:end])
+            chunks.append((req.text[start:end], start))
             start = end - overlap if end < len(req.text) else len(req.text)
 
     t0 = time.perf_counter()
     merged: Dict[tuple, Dict[str, Any]] = {}
-    for chunk in chunks:
+    for chunk_idx, (chunk, base) in enumerate(chunks):
         raw = backend.model.extract_entities(
             chunk, req.labels, threshold=req.threshold,
             include_confidence=True, include_spans=True, max_len=512,
         )
         for label, hits in raw.get("entities", {}).items():
             for h in hits:
+                start = h.get("start")
+                end = h.get("end")
+                # translate chunk-relative offsets to document space
+                doc_start = (start + base) if start is not None else None
+                doc_end = (end + base) if end is not None else None
                 key = (label, h.get("text"))
                 if key not in merged or h.get("confidence", 0) > merged[key]["confidence"]:
                     merged[key] = {
                         "label": label,
                         "text": h.get("text"),
                         "confidence": round(float(h.get("confidence", 0)), 6),
-                        "start": h.get("start"),
-                        "end": h.get("end"),
+                        "start": doc_start,
+                        "end": doc_end,
+                        "chunk_index": chunk_idx,
                     }
 
     return {
@@ -441,8 +460,12 @@ def benchmark(req: BenchmarkRequest) -> Dict[str, Any]:
 
 @app.exception_handler(KeyError)
 async def key_error_handler(request, exc: KeyError):
-    """Unknown model ids anywhere surface as 422, never a raw 500."""
-    return JSONResponse(status_code=422, content={"detail": str(exc)})
+    """Unknown model ids surface as 422; genuine model bugs get logged."""
+    message = str(exc)
+    if message.startswith("Unknown model"):
+        return JSONResponse(status_code=422, content={"detail": message})
+    _log.exception("KeyError on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.exception_handler(Exception)

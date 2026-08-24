@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { checkBackend, fetchEntities, type Entity } from "@/lib/api";
 import { DEMO_ENTITIES } from "@/lib/demo";
 
@@ -16,7 +16,6 @@ export default function ThresholdExplorerWidget() {
   const [candidateSource, setCandidateSource] = useState<"live" | "demo">("demo");
   const [loading, setLoading] = useState(false);
   const [pulseKey, setPulseKey] = useState(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const run = useCallback(async () => {
     setLoading(true);

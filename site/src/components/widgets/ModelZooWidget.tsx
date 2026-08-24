@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { checkBackend, fetchCompare, MODEL_IDS } from "@/lib/api";
+import { checkBackend, fetchCompare, MODEL_IDS, type CompareRow } from "@/lib/api";
 import { DEMO_COMPARE } from "@/lib/demo";
 
 const SAMPLE = "Apple CEO Tim Cook announced the iPhone 15 in Cupertino.";
@@ -16,7 +16,7 @@ const MODEL_META: Record<string, { name: string; params: string; family: string 
 };
 
 export default function ModelZooWidget() {
-  const [rows, setRows] = useState<{ model: string; family: string; latency_ms: number; entities: { label: string; text: string; confidence: number }[] }[]>([]);
+  const [rows, setRows] = useState<CompareRow[]>([]);
   const [live, setLive] = useState(false);
   const [running, setRunning] = useState(false);
 
@@ -29,11 +29,11 @@ export default function ModelZooWidget() {
         setRows(res.results);
         setLive(true);
       } else {
-        setRows(DEMO_COMPARE().results as typeof rows);
+        setRows(DEMO_COMPARE().results);
         setLive(false);
       }
     } catch {
-      setRows(DEMO_COMPARE().results as typeof rows);
+      setRows(DEMO_COMPARE().results);
       setLive(false);
     }
     setRunning(false);

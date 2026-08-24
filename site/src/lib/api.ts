@@ -140,12 +140,25 @@ export async function fetchEntitiesLong(
   return post("/api/entities-long", { text, labels, model, threshold }, LONG_TIMEOUT_MS);
 }
 
+export type CompareRow = {
+  model: string;
+  family: string;
+  latency_ms: number;
+  entities: {
+    label: string;
+    text: string;
+    confidence: number;
+    start?: number | null;
+    end?: number | null;
+  }[];
+};
+
 export async function fetchCompare(
   text: string,
   labels: string[],
   models: string[]
 ): Promise<{
-  results: { model: string; family: string; latency_ms: number; entities: Entity[] }[];
+  results: CompareRow[];
 }> {
   return post("/api/compare", { text, labels, models }, LONG_TIMEOUT_MS);
 }

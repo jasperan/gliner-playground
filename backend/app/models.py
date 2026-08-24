@@ -81,10 +81,6 @@ MODEL_CATALOG: Dict[str, object] = {
 }
 
 
-def get_model_ids() -> Tuple[str, ...]:
-    return tuple(_MODELS.keys())
-
-
 class ModelBackend:
     """Wrapper holding a loaded model plus catalog metadata."""
 
