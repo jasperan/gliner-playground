@@ -91,17 +91,32 @@ app = FastAPI(
     version="0.1.0",
 )
 
+_log = logging.getLogger("gliner.playground")
+
 # CORS origins from env (comma-separated). Defaults are local-dev friendly; set
 # GLINER_ALLOWED_ORIGINS to your deployed site origin(s) before public hosting.
 _cors_origins = os.environ.get("GLINER_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3100,http://localhost:3200")
+_allowed_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+
+# The API is unauthenticated and every request costs a forward pass, so a wildcard
+# allowlist lets any site it is loaded from drive this backend. It is not refused (a
+# self-hosted deployment may mean it), but it is never silent.
+if "*" in _allowed_origins:
+    _log.warning(
+        "GLINER_ALLOWED_ORIGINS contains '*': any web origin can call this inference API. "
+        "Prefer explicit origins, and put TLS plus authentication in front before exposing it."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Credentials stay off: the API is unauthenticated and needs no cookies, and this
+    # keeps the wildcard-with-credentials combination impossible by construction.
+    allow_credentials=False,
 )
 
-_log = logging.getLogger("gliner.playground")
 
 
 @app.get("/health")
