@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "${1:-help}" in
   backend)
-    echo "◆ Starting GLiNER inference API on http://0.0.0.0:8000 …"
+    echo "◆ Starting GLiNER inference API on http://127.0.0.1:8000 (set GLINER_HOST=0.0.0.0 to expose on the LAN) …"
     cd "$ROOT/backend"
     HF_HOME="${HF_HOME:-$ROOT/backend/models_cache}" uv run python __run__.py
     ;;
