@@ -37,7 +37,7 @@ An interactive showcase for the **[GLiNER](https://github.com/urchade/GLiNER)** 
 ```bash
 cd backend
 uv sync                        # creates .venv with gliner2[local], fastapi, pytest
-uv run python __run__.py       # serves on http://0.0.0.0:8000
+uv run python __run__.py       # serves on http://127.0.0.1:8000 (set GLINER_HOST=0.0.0.0 to expose it)
 ```
 
 First model load downloads weights into `backend/models_cache/` (HF cache).
@@ -116,7 +116,7 @@ The backend is a plain FastAPI app:
 ```bash
 # example: fly.io / railway / any docker host
 uv pip install --system gliner2[local] fastapi uvicorn
-HF_HOME=/data/models uv run python __run__.py  # bind 0.0.0.0:8000
+HF_HOME=/data/models GLINER_HOST=0.0.0.0 uv run python __run__.py  # bind the container interface; keep TLS + auth in front
 ```
 
 Recommended: restrict `allow_origins` in `backend/app/main.py` to your site's domain, and put the API behind TLS + auth if it's public (see [SECURITY.md](SECURITY.md) notes).
