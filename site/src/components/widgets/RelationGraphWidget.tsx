@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { RotateCcw } from "lucide-react";
 import { checkBackend, fetchRelations } from "@/lib/api";
 import { DEMO_RELATIONS } from "@/lib/demo";
+import { Foot, Status } from "./parts";
 
 type Rel = {
   relation: string;
@@ -39,17 +41,23 @@ function layout(rels: Rel[]): { nodes: Node[]; edges: { from: number; to: number
       id: name,
       label: name,
       kind: nodeMap.get(name)!.kind,
-      x: 160 + Math.cos(angle) * 130,
-      y: 105 + Math.sin(angle) * 90,
+      x: 450 + Math.cos(angle) * 330,
+      y: 156 + Math.sin(angle) * 96,
     };
   });
   return { nodes, edges };
 }
 
-const KIND_COLOR: Record<Node["kind"], { fill: string; stroke: string; text: string }> = {
-  person: { fill: "rgba(34,211,238,0.15)", stroke: "#22d3ee", text: "#67e8f9" },
-  org: { fill: "rgba(167,139,250,0.15)", stroke: "#a78bfa", text: "#c4b5fd" },
-  place: { fill: "rgba(74,222,128,0.15)", stroke: "#4ade80", text: "#86efac" },
+const KIND_INK: Record<Node["kind"], string> = {
+  person: "#6ea3a0",
+  org: "#8f8bc0",
+  place: "#8ea86b",
+};
+
+const KIND_LABEL: Record<Node["kind"], string> = {
+  person: "person",
+  org: "organization",
+  place: "place",
 };
 
 export default function RelationGraphWidget() {
@@ -58,7 +66,6 @@ export default function RelationGraphWidget() {
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState<number | null>(null);
   const [duration, setDuration] = useState(0);
-  const timersRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -83,120 +90,132 @@ export default function RelationGraphWidget() {
 
   useEffect(() => {
     run();
-    return () => {
-      if (timersRef.current) clearTimeout(timersRef.current);
-    };
   }, [run]);
 
   const { nodes, edges } = layout(rels);
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Interactive · Relation extraction graph</div>
-        <div className="ml-auto flex items-center gap-2">
-          {duration > 0 && <span className="text-[11px] font-mono text-cyan-300/80">{duration} ms</span>}
-          <button className="btn-mono" onClick={run}>⟳ Re-run</button>
-          <span
-            className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
-              live ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
-            }`}
-          >
-            {live ? "● LIVE INFERENCE" : "● DEMO DATA"}
+    <div className="widget">
+      <div className="widget-head">
+        <span className="widget-name">relations</span>
+        <span className="instrument" style={{ marginLeft: "auto" }}>
+          {nodes.length} nodes · {edges.length} edges
+        </span>
+        <button className="btn" style={{ height: 28, padding: "0 10px" }} onClick={run} disabled={loading}>
+          <RotateCcw size={12} strokeWidth={1.5} aria-hidden />
+          Re-run
+        </button>
+        <Status live={live} />
+      </div>
+
+      <div className="widget-body">
+        <div className="well">
+          <p className="passage" style={{ maxHeight: "none", fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
+            {SENTENCE}
+          </p>
+        </div>
+
+        <div className="well" style={{ padding: 0, overflow: "hidden" }}>
+          <svg viewBox="0 0 900 320" className="graph" role="img" aria-label="Relation graph">
+            {edges.map((e, i) => {
+              const from = nodes[e.from];
+              const to = nodes[e.to];
+              if (!from || !to) return null;
+              const active = hovered !== null && (hovered === e.from || hovered === e.to);
+              return (
+                <g key={i} opacity={hovered === null || active ? 1 : 0.2}>
+                  <line
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    stroke={active ? "rgba(239,233,222,0.4)" : "rgba(239,233,222,0.16)"}
+                    strokeWidth={1}
+                  />
+                  <text
+                    x={(from.x + to.x) / 2 + 6}
+                    y={(from.y + to.y) / 2 - 6}
+                    fontSize={10}
+                    fill={active ? "var(--text)" : "var(--text-3)"}
+                    fontFamily="var(--font-mono)"
+                  >
+                    {e.relation}
+                  </text>
+                </g>
+              );
+            })}
+            {nodes.map((node, i) => {
+              const ink = KIND_INK[node.kind];
+              const isActive = hovered === null || hovered === i;
+              return (
+                <g
+                  key={node.id}
+                  opacity={isActive ? 1 : 0.25}
+                  style={{ cursor: "pointer", transition: "opacity 160ms var(--ease)" }}
+                  onMouseEnter={() => setHovered(i)}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={hovered === i ? 19 : 16}
+                    fill={`color-mix(in srgb, ${ink} 24%, transparent)`}
+                    stroke={`color-mix(in srgb, ${ink} 70%, transparent)`}
+                    strokeWidth={1.25}
+                    style={{ transition: "r 160ms var(--ease)" }}
+                  />
+                  <text
+                    x={node.x}
+                    y={node.y + 34}
+                    textAnchor="middle"
+                    fontSize={11}
+                    fill="var(--text)"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {node.label.length > 18 ? `${node.label.slice(0, 17)}…` : node.label}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+          {loading && (
+            <div className="instrument" style={{ padding: "0 12px 10px" }}>
+              extracting relations
+            </div>
+          )}
+        </div>
+
+        <div className="legend">
+          {(Object.keys(KIND_LABEL) as Node["kind"][]).map((kind) => (
+            <span key={kind} className="legend-item">
+              <span className="swatch" style={{ background: KIND_INK[kind] }} />
+              {KIND_LABEL[kind]}
+            </span>
+          ))}
+          <span className="instrument" style={{ marginLeft: "auto" }}>
+            hover a node to isolate its relations
           </span>
         </div>
+
+        {rels.length > 0 && (
+          <div className="rel-grid">
+            {rels.map((r, i) => (
+              <div key={i} className="rel-card row-fade">
+                <div className="rel-line">
+                  <span className="ladder-name">{r.head}</span>
+                  <span className="instrument">{r.relation}</span>
+                  <span className="ladder-name">{r.tail}</span>
+                </div>
+                <div className="meter" style={{ marginTop: 6 }}>
+                  <span style={{ width: `${Math.min(r.tail_confidence * 100, 100)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="bg-muted/50 border border-border rounded-lg p-3 text-sm text-zinc-300 font-mono">
-        {SENTENCE}
-      </div>
-
-      <div className="bg-[#101014] border border-border rounded-lg overflow-hidden">
-        <svg viewBox="0 0 320 210" className="w-full h-auto">
-          <defs>
-            <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(34,211,238,0.25)" />
-              <stop offset="100%" stopColor="transparent" />
-            </radialGradient>
-          </defs>
-          {edges.map((e, i) => {
-            const from = nodes[e.from];
-            const to = nodes[e.to];
-            if (!from || !to) return null;
-            const active = hovered !== null && (hovered === e.from || hovered === e.to);
-            return (
-              <g key={i} className="graph-node" opacity={hovered === null || active ? 1 : 0.25}>
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="rgba(148,163,184,0.4)" strokeWidth={1.5} strokeDasharray={hovered === e.from || hovered === e.to ? "0" : "4 3"} />
-                <text
-                  x={(from.x + to.x) / 2 + 6}
-                  y={(from.y + to.y) / 2 - 6}
-                  fontSize={9}
-                  fill={hovered === e.from || hovered === e.to ? "#fbbf24" : "#71717a"}
-                  fontFamily="monospace"
-                  className={hovered === e.from || hovered === e.to ? "animate-slide-in" : ""}
-                >
-                  {e.relation}
-                </text>
-              </g>
-            );
-          })}
-          {nodes.map((node, i) => {
-            const c = KIND_COLOR[node.kind];
-            const isActive = hovered === null || hovered === i;
-            return (
-              <g
-                key={node.id}
-                className="graph-node cursor-pointer"
-                opacity={isActive ? 1 : 0.25}
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={() => setHovered(null)}
-              >
-                <circle cx={node.x} cy={node.y} r={30} fill="url(#nodeGlow)" />
-                <circle
-                  cx={node.x}
-                  cy={node.y}
-                  r={hovered === i ? 24 : 20}
-                  fill={c.fill}
-                  stroke={c.stroke}
-                  strokeWidth={hovered === i ? 2.5 : 1.5}
-                />
-                <text
-                  x={node.x}
-                  y={node.y + 3}
-                  textAnchor="middle"
-                  fontSize={node.label.length > 12 ? 8 : 9.5}
-                  fill={c.text}
-                  fontFamily="monospace"
-                  fontWeight={600}
-                >
-                  {node.label.length > 16 ? node.label.slice(0, 15) + "…" : node.label}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
-        {loading && <div className="text-center text-xs text-muted-foreground py-2 animate-pulse">extracting relations…</div>}
-      </div>
-
-      <div className="flex flex-wrap gap-4 text-xs">
-        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-cyan-400" /> person</span>
-        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-purple-400" /> organization</span>
-        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-400" /> place</span>
-        <span className="text-muted-foreground">hover a node to see its relations</span>
-      </div>
-
-      {rels.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {rels.map((r, i) => (
-            <div key={i} className="bg-muted/40 border border-border rounded px-3 py-2 text-xs font-mono animate-slide-in" style={{ animationDelay: `${i * 80}ms` }}>
-              <span className="text-amber-400">{r.head}</span>
-              <span className="text-muted-foreground"> —{r.relation}→ </span>
-              <span className="text-amber-400">{r.tail}</span>
-              <div className="mt-1 h-1 bg-white/5 rounded-full"><div className="h-full bg-amber-500/60 rounded-full" style={{ width: `${Math.min(r.tail_confidence * 100, 100)}%` }} /></div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Foot items={["fastino/gliner2-base-v1", "205M params", duration > 0 ? `${duration} ms` : null]} />
     </div>
   );
 }

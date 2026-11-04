@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { checkBackend, fetchStructured } from "@/lib/api";
 import { DEMO_STRUCTURED } from "@/lib/demo";
+import { Foot, Status } from "./parts";
 
 type JsonView = Record<string, any>;
 
@@ -86,7 +87,7 @@ export default function StructuredExtractionWidget() {
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [latency, setLatency] = useState<number | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -112,65 +113,68 @@ export default function StructuredExtractionWidget() {
   }, [text, structures]);
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(run, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => clearTimeout(debounceRef.current);
   }, [run]);
 
   const applyPreset = (i: number) => {
     setPreset(i);
     setText(PRESETS[i].text);
-    setStructures(PRESETS[i].structures);  };
+    setStructures(PRESETS[i].structures);
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Interactive · Messy text → structured JSON</div>
-        <div className="ml-auto flex items-center gap-2">
-          {latency != null && <span className="text-[11px] font-mono text-cyan-300/80">{latency.toFixed(0)} ms</span>}
-          <span
-            className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
-              live ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
-            }`}
-          >
-            {live ? "● LIVE INFERENCE" : "● DEMO DATA"}
-          </span>
+    <div className="widget">
+      <div className="widget-head">
+        <span className="widget-name">schema-extraction</span>
+        <span className="instrument" style={{ marginLeft: "auto" }}>
+          {Object.keys(structures).length} object
+          {Object.keys(structures).length === 1 ? "" : "s"} in the schema
+        </span>
+        <Status live={live} />
+      </div>
+
+      <div className="widget-body">
+        <div className="field-row">
+          {PRESETS.map((p, i) => (
+            <button key={p.name} className="chip" onClick={() => applyPreset(i)} aria-pressed={i === preset}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="split split-2" style={{ marginTop: 0 }}>
+          <div className="stack">
+            <div className="label-row">
+              <span className="label">Raw input</span>
+              <span className="instrument">human-flavoured text</span>
+            </div>
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} className="field" />
+            <div className="label-row" style={{ marginTop: 4 }}>
+              <span className="label">Schema</span>
+              <span className="instrument">field::dtype::description</span>
+            </div>
+            <div className="well" style={{ padding: 10 }}>
+              <pre className="json" style={{ margin: 0 }}>
+                {JSON.stringify(structures, null, 2)}
+              </pre>
+            </div>
+          </div>
+
+          <div className="well">
+            <div className="label-row">
+              <span className="label">Clean JSON</span>
+              {loading && <span className="instrument">parsing</span>}
+            </div>
+            <div className="json-scroll" style={{ marginTop: 10 }}>
+              {data != null && <JsonNode data={data} />}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p, i) => (
-          <button key={p.name} className={`chip ${i === preset ? "active" : ""}`} onClick={() => applyPreset(i)}>
-            {p.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="text-[11px] font-mono text-muted-foreground">RAW INPUT (human-flavored)</div>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={6}
-            className="w-full bg-muted/60 border border-border rounded-lg p-3 text-sm font-mono resize-y focus:outline-none focus:border-cyan-500/50"
-          />
-          <div className="text-[11px] font-mono text-muted-foreground">SCHEMA (field::dtype::description)</div>
-          <div className="bg-muted/40 border border-border rounded p-2 font-mono text-xs text-green-300/90 whitespace-pre-wrap">
-            {JSON.stringify(structures, null, 2)}
-          </div>
-        </div>
-        <div className="bg-[#101014] border border-border rounded-lg p-4">
-          <div className="text-[11px] font-mono text-muted-foreground mb-2">
-            CLEAN JSON {loading && <span className="text-cyan-400 animate-pulse">· parsing…</span>}
-          </div>
-          <div className="font-mono text-sm max-h-[340px] overflow-y-auto pr-1">
-            {data != null && <JsonNode data={data} />}
-          </div>
-        </div>
-      </div>
+      <Foot items={["fastino/gliner2-base-v1", "205M params", latency != null ? `${latency.toFixed(0)} ms` : null]} />
     </div>
   );
 }

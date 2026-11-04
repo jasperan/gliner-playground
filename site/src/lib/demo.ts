@@ -22,6 +22,9 @@ export const DEMO_ENTITIES = (text: string, labels: string[]) => {
     if (has("jk rowling") || has("j.k. rowling")) add("person", text.match(/J\.?K\. Rowling/i)?.[0] ?? "J.K. Rowling", 0.94);
     if (has("john")) add("person", "John", 0.92);
     if (has("emily")) add("person", "Emily Carter", 0.9);
+    if (has("mark zuckerberg")) add("person", "Mark Zuckerberg", 0.96);
+    if (has("satya nadella")) add("person", "Satya Nadella", 0.95);
+    if (has("jensen huang")) add("person", "Jensen Huang", 0.93);
   }
   if (want("company") || want("organization") || want("entreprise") || want("empresa") || want("azienda")) {
     if (has("apple")) add("company", "Apple", 0.99);
@@ -30,6 +33,9 @@ export const DEMO_ENTITIES = (text: string, labels: string[]) => {
     if (has("acme")) add("company", "Acme Corp", 0.94);
     if (has("bloomsbury")) add("company", "Bloomsbury", 0.93);
     if (has("fastino")) add("company", "Fastino Labs", 0.97);
+    if (has("microsoft")) add("company", "Microsoft", 0.96);
+    if (has("meta")) add("company", "Meta", 0.94);
+    if (has("nvidia")) add("company", "Nvidia", 0.93);
   }
   if (want("product")) {
     if (has("iphone 15")) add("product", "iPhone 15", 0.98);
@@ -41,6 +47,15 @@ export const DEMO_ENTITIES = (text: string, labels: string[]) => {
     if (has("london")) add("location", "London", 0.95);
     if (has("san francisco")) add("location", "San Francisco", 0.93);
     if (has("paris")) add("location", "Paris", 0.94);
+    if (has("menlo park")) add("location", "Menlo Park", 0.9);
+    if (has("redmond")) add("location", "Redmond", 0.91);
+    if (has("santa clara")) add("location", "Santa Clara", 0.92);
+  }
+  if (want("date")) {
+    for (const m of text.matchAll(/\b(?:19|20)\d{2}\b/g)) {
+      const start = m.index ?? 0;
+      entities.push({ label: "date", text: m[0], confidence: 0.74, start, end: start + m[0].length });
+    }
   }
   if (want("book")) {
     if (has("harry potter")) add("book", "Harry Potter", 0.92);

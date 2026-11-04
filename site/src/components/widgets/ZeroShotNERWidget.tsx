@@ -1,38 +1,48 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { fetchEntities, checkBackend, type Entity } from "@/lib/api";
 import { DEMO_ENTITIES } from "@/lib/demo";
+import { Foot, Status } from "./parts";
 
-const COLOR_CLASSES = ["ent-a", "ent-b", "ent-c", "ent-d", "ent-e", "ent-f"];
+const INKS = ["ink-a", "ink-b", "ink-c", "ink-d", "ink-e", "ink-f"];
 
 const PRESETS = [
   {
-    name: "Apple announcement",
-    text: "Apple CEO Tim Cook announced the iPhone 15 in Cupertino, California.",
-    labels: ["company", "person", "product", "location"],
+    name: "Support ticket",
+    text: "Hi, I'm Sarah Chen from Acme Corp. My order #A-4471 arrived damaged. Call me at +1 415 555 0132 or email sarah.chen@acme.com.",
+    labels: ["person", "company", "order_number", "email_address", "phone_number"],
   },
   {
-    name: "Startup founders",
-    text: "Elon Musk founded SpaceX in 2002 and Tesla in 2003, and now runs X in Austin.",
-    labels: ["person", "company", "city"],
+    name: "News lede",
+    text: "Apple CEO Tim Cook announced the iPhone 15 in Cupertino on Tuesday, a week after Microsoft unveiled its Surface lineup in Redmond.",
+    labels: ["person", "company", "product", "location"],
   },
   {
-    name: "Medical note",
-    text: "Patient Jane Smith, 45, was prescribed Metformin 500mg for type 2 diabetes by Dr. Lee at St. Mary's Hospital.",
-    labels: ["person", "drug", "condition", "hospital"],
+    name: "Clinical note",
+    text: "Patient was started on metformin 500mg twice daily for type 2 diabetes; HbA1c measured at 8.1% during the visit on 12 March.",
+    labels: ["drug", "condition", "dosage", "measurement"],
   },
   {
-    name: "PII redaction",
-    text: "Hi, my order #48291 hasn't arrived. Contact me at john.doe@gmail.com or 555-0192.",
-    labels: ["email_address", "phone_number", "order_number", "person_name"],
+    name: "Contract clause",
+    text: "The Supplier shall deliver the Goods to the Buyer's warehouse in Rotterdam no later than 30 June 2024, failing which a penalty of EUR 12,000 applies.",
+    labels: ["party", "location", "date", "amount"],
   },
 ];
 
-function labelColor(label: string): string {
+const MODEL_PARAMS: Record<string, string> = {
+  "fastino/gliner2-base-v1": "205M",
+  "fastino/gliner2-multi-v1": "205M",
+  "urchade/gliner_small-v2.1": "64M",
+  "gliner-community/gliner_medium-v2.5": "169M",
+  "urchade/gliner_multi-v2.1": "169M",
+};
+
+function labelInk(label: string): string {
   let h = 0;
   for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
-  return COLOR_CLASSES[h % COLOR_CLASSES.length];
+  return INKS[h % INKS.length];
 }
 
 function HighlightedText({ text, entities }: { text: string; entities: Entity[] }) {
@@ -55,12 +65,12 @@ function HighlightedText({ text, entities }: { text: string; entities: Entity[] 
   if (cursor < text.length) parts.push({ text: text.slice(cursor) });
 
   return (
-    <p className="text-[15px] leading-8 whitespace-pre-wrap">
+    <p className="passage">
       {parts.map((part, i) =>
         part.entity ? (
           <mark
             key={i}
-            className={`${labelColor(part.entity.label)} rounded px-0.5 py-0 font-medium`}
+            className={`mark ${labelInk(part.entity.label)}`}
             title={`${part.entity.label} · ${(part.entity.confidence * 100).toFixed(1)}%`}
           >
             {part.text}
@@ -69,7 +79,7 @@ function HighlightedText({ text, entities }: { text: string; entities: Entity[] 
           <span key={i}>{part.text}</span>
         )
       )}
-      {entities.length === 0 && <span className="text-muted-foreground/60 italic">— no entities found at this threshold —</span>}
+      {entities.length === 0 && <span className="instrument">no spans above this threshold</span>}
     </p>
   );
 }
@@ -85,8 +95,7 @@ export default function ZeroShotNERWidget() {
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [runId, setRunId] = useState(0);
-  const labelInputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const requestSeq = useRef(0);
 
   const runInference = useCallback(async () => {
@@ -121,11 +130,9 @@ export default function ZeroShotNERWidget() {
 
   // Debounced auto-run whenever inputs change
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => runInference(), 350);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => clearTimeout(debounceRef.current);
   }, [runInference]);
 
   const addLabel = () => {
@@ -142,65 +149,58 @@ export default function ZeroShotNERWidget() {
     setLabels(PRESETS[i].labels);
   };
 
+  const legend = [...new Set(entities.map((e) => e.label))];
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Interactive · Zero-shot NER</div>
-        <div className="ml-auto flex items-center gap-2">
-          <span
-            className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
-              live ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
-            }`}
-            title={live ? "Running against the FastAPI backend (live inference)" : "Backend offline — using curated demo data"}
-          >
-            {live ? "● LIVE INFERENCE" : "● DEMO DATA"}
-          </span>
-          {latency != null && (
-            <span className="text-[11px] font-mono text-cyan-300/80">{latency.toFixed(0)} ms</span>
-          )}
+    <div className="widget">
+      <div className="widget-head">
+        <span className="widget-name">zero-shot-ner</span>
+        <span style={{ marginLeft: "auto" }} className="instrument">
+          {entities.length} spans
+        </span>
+        <Status live={live} />
+      </div>
+
+      <div className="widget-body">
+        <div className="field-row">
+          {PRESETS.map((p, i) => (
+            <button key={p.name} className="chip" onClick={() => applyPreset(i)}>
+              {p.name}
+            </button>
+          ))}
         </div>
-      </div>
 
-      {/* Presets */}
-      <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p, i) => (
-          <button key={p.name} className="chip" onClick={() => applyPreset(i)}>
-            {p.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Input pane */}
-        <div className="space-y-3">
-          <div className="text-xs font-mono text-muted-foreground">INPUT TEXT</div>
+        <div className="stack">
+          <div className="label-row">
+            <span className="label">Input text</span>
+            <span className="instrument">{text.length} chars</span>
+          </div>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            rows={6}
-            className="w-full bg-muted/60 border border-border rounded-lg p-3 text-sm font-mono resize-y focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30"
+            rows={4}
+            className="field"
             placeholder="Type or paste any text…"
           />
-          <div className="text-xs font-mono text-muted-foreground">
-            ENTITY TYPES <span className="text-muted-foreground/60">(define them yourself — no training needed!)</span>
+        </div>
+
+        <div className="stack">
+          <div className="label-row">
+            <span className="label">Entity types</span>
+            <span className="instrument">click a label to remove it</span>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="field-row">
             {labels.map((label) => (
-              <button
-                key={label}
-                onClick={() => removeLabel(label)}
-                className="chip active group"
-                title="Click to remove"
-              >
-                <span className={labelColor(label)}>{label}</span>
-                <span className="ml-1 text-muted-foreground group-hover:text-red-400">✕</span>
+              <button key={label} onClick={() => removeLabel(label)} className="chip" title={`Remove “${label}”`}>
+                <span className={`swatch ${labelInk(label)}`} />
+                {label}
+                <X size={11} strokeWidth={1.5} className="chip-x" aria-hidden />
               </button>
             ))}
-            {labels.length === 0 && <span className="text-xs text-muted-foreground">click ✕ to remove, or add new ones below</span>}
+            {labels.length === 0 && <span className="instrument">add a label</span>}
           </div>
-          <div className="flex gap-2">
+          <div className="field-row">
             <input
-              ref={labelInputRef}
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               onKeyDown={(e) => {
@@ -209,77 +209,86 @@ export default function ZeroShotNERWidget() {
                   addLabel();
                 }
               }}
-              placeholder="add a label… e.g. email_address"
-              className="flex-1 bg-muted/60 border border-border rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-cyan-500/50"
+              placeholder="add a label, e.g. email_address"
+              className="field"
+              style={{ flex: "1 1 200px" }}
             />
-            <button className="btn-mono" onClick={addLabel}>
-              + Add
+            <button className="btn" onClick={addLabel}>
+              <Plus size={13} strokeWidth={1.5} aria-hidden />
+              Add
             </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="flex items-center gap-2 text-muted-foreground">
-              threshold
-              <input
-                type="range"
-                min={0.1}
-                max={0.95}
-                step={0.05}
-                value={threshold}
-                onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                className="w-28"
-              />
-              <span className="font-mono text-cyan-300">{threshold.toFixed(2)}</span>
-            </label>
-            <label className="flex items-center gap-2 text-muted-foreground">
-              model
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="bg-muted border border-border rounded px-2 py-1 font-mono text-xs"
-              >
-                <option value="fastino/gliner2-base-v1">GLiNER2 base (en)</option>
-                <option value="fastino/gliner2-multi-v1">GLiNER2 multi (6 langs)</option>
-                <option value="urchade/gliner_small-v2.1">GLiNER small v2.1</option>
-                <option value="gliner-community/gliner_medium-v2.5">GLiNER medium v2.5</option>
-                <option value="urchade/gliner_multi-v2.1">GLiNER multi v2.1</option>
-              </select>
-            </label>
           </div>
         </div>
 
-        {/* Output pane */}
-        <div className="space-y-3">
-          <div className="text-xs font-mono text-muted-foreground">
-            EXTRACTED ENTITIES{" "}
-            {loading && <span className="text-cyan-400/80 animate-pulse">· running…</span>}
-          </div>
-          <div className="bg-muted/50 border border-border rounded-lg p-3 min-h-[140px] max-h-[220px] overflow-y-auto">
-            <HighlightedText text={text} entities={entities} />
-          </div>
-          <div key={runId} className="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
-            {entities.length === 0 && <div className="text-xs text-muted-foreground">Nothing found — try lowering the threshold or adding labels.</div>}
-            {entities.map((e, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-2 text-xs animate-slide-in"
-                style={{ animationDelay: `${i * 40}ms` }}
-              >
-                <span className={`${labelColor(e.label)} rounded px-1.5 py-0.5 font-mono w-28 text-center shrink-0`}>
-                  {e.label}
-                </span>
-                <span className="font-mono text-sm text-foreground truncate max-w-[45%]">{e.text}</span>
-                <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full"
-                    style={{ width: `${e.confidence * 100}%` }}
-                  />
-                </div>
-                <span className="font-mono text-muted-foreground w-10 text-right">{(e.confidence * 100).toFixed(0)}%</span>
-              </div>
+        <div className="field-row" style={{ gap: 20 }}>
+          <label className="field-row" style={{ flex: "1 1 220px" }}>
+            <span className="label">threshold</span>
+            <input
+              type="range"
+              min={0.1}
+              max={0.95}
+              step={0.05}
+              value={threshold}
+              onChange={(e) => setThreshold(parseFloat(e.target.value))}
+              style={{ flex: 1, minWidth: 100 }}
+              aria-label="Confidence threshold"
+            />
+            <span className="instrument tnum" style={{ color: "var(--text)" }}>
+              {threshold.toFixed(2)}
+            </span>
+          </label>
+          <label className="field-row" style={{ flex: "1 1 220px" }}>
+            <span className="label">model</span>
+            <select value={model} onChange={(e) => setModel(e.target.value)} className="field" style={{ flex: 1 }}>
+              <option value="fastino/gliner2-base-v1">GLiNER2 base (en)</option>
+              <option value="fastino/gliner2-multi-v1">GLiNER2 multi (6 langs)</option>
+              <option value="urchade/gliner_small-v2.1">GLiNER small v2.1</option>
+              <option value="gliner-community/gliner_medium-v2.5">GLiNER medium v2.5</option>
+              <option value="urchade/gliner_multi-v2.1">GLiNER multi v2.1</option>
+            </select>
+          </label>
+        </div>
+
+        <hr className="rule" />
+
+        <div className="label-row">
+          <span className="label">Extracted entities</span>
+          {loading && <span className="instrument">running</span>}
+        </div>
+
+        <div className="well">
+          <HighlightedText text={text} entities={entities} />
+        </div>
+
+        {legend.length > 0 && (
+          <div className="legend">
+            {legend.map((label) => (
+              <span key={label} className="legend-item">
+                <span className={`swatch ${labelInk(label)}`} />
+                {label}
+              </span>
             ))}
           </div>
+        )}
+
+        <div className="ladder" key={runId}>
+          {entities.length === 0 && (
+            <div className="instrument">Nothing found — lower the threshold or add a label.</div>
+          )}
+          {entities.map((e, i) => (
+            <div className="ladder-row row-fade" key={`${e.label}-${e.text}-${i}`}>
+              <span className="ladder-name">{e.text}</span>
+              <span className="ladder-tag">{e.label}</span>
+              <div className="meter meter-accent">
+                <span style={{ width: `${e.confidence * 100}%` }} />
+              </div>
+              <span className="ladder-score">{(e.confidence * 100).toFixed(0)}%</span>
+            </div>
+          ))}
         </div>
       </div>
+
+      <Foot items={[model, `${MODEL_PARAMS[model] ?? "—"} params`, latency != null ? `${latency.toFixed(0)} ms` : null]} />
     </div>
   );
 }

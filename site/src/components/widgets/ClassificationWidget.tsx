@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { checkBackend, fetchClassification, type Classification } from "@/lib/api";
 import { DEMO_CLASSIFY } from "@/lib/demo";
+import { Foot, Status } from "./parts";
 
 const TASKS: Record<string, string[]> = {
   sentiment: ["positive", "negative", "neutral"],
@@ -18,13 +19,16 @@ const REVIEWS = [
   "My GPU is overheating after just 10 minutes of gaming.",
 ];
 
+type Task = "sentiment" | "topic" | "intent";
+
 export default function ClassificationWidget() {
   const [text, setText] = useState(REVIEWS[0]);
-  const [task, setTask] = useState<"sentiment" | "topic" | "intent">("sentiment");
+  const [task, setTask] = useState<Task>("sentiment");
   const [results, setResults] = useState<Classification[]>([]);
+  const [latency, setLatency] = useState<number | null>(null);
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -32,15 +36,20 @@ export default function ClassificationWidget() {
     let classifications: Classification[] = [];
     try {
       if (await checkBackend()) {
-        classifications = (await fetchClassification(text, tasks)).classifications;
+        const res = await fetchClassification(text, tasks);
+        classifications = res.classifications;
+        setLatency(res.latency_ms);
         setLive(true);
       } else {
-        const demo = DEMO_CLASSIFY(text).classifications.filter((c) => c.task === task) as Classification[];
-        classifications = demo;
+        const demo = DEMO_CLASSIFY(text);
+        classifications = demo.classifications.filter((c) => c.task === task) as Classification[];
+        setLatency(demo.latency_ms);
         setLive(false);
       }
     } catch {
-      classifications = DEMO_CLASSIFY(text).classifications.filter((c) => c.task === task) as Classification[];
+      const demo = DEMO_CLASSIFY(text);
+      classifications = demo.classifications.filter((c) => c.task === task) as Classification[];
+      setLatency(demo.latency_ms);
       setLive(false);
     }
     setResults(classifications);
@@ -48,104 +57,103 @@ export default function ClassificationWidget() {
   }, [text, task]);
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(run, 250);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => clearTimeout(debounceRef.current);
   }, [run]);
 
   const winner = results[0];
   const winnerConf = winner?.confidence ?? 0;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono">Interactive · Text classification</div>
-        <div className="ml-auto flex items-center gap-2">
-          <span
-            className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
-              live ? "border-green-500/40 text-green-400 bg-green-500/10" : "border-yellow-500/40 text-yellow-400 bg-yellow-500/10"
-            }`}
-          >
-            {live ? "● LIVE INFERENCE" : "● DEMO DATA"}
-          </span>
-        </div>
+    <div className="widget">
+      <div className="widget-head">
+        <span className="widget-name">classify</span>
+        <span className="instrument" style={{ marginLeft: "auto" }}>
+          {task} · {TASKS[task].length} candidate labels
+        </span>
+        <Status live={live} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {(Object.keys(TASKS) as Array<"sentiment" | "topic" | "intent">).map((t) => (
-          <button key={t} className={`chip ${task === t ? "active" : ""}`} onClick={() => setTask(t)}>
-            {t}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="text-[11px] font-mono text-muted-foreground">INPUT TEXT</div>
-          <select
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            className="w-full bg-muted/60 border border-border rounded-lg px-3 py-2 text-sm font-mono mb-2"
-          >
-            {REVIEWS.map((r) => (
-              <option key={r} value={r}>
-                {r.slice(0, 70)}…
-              </option>
-            ))}
-          </select>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            className="w-full bg-muted/60 border border-border rounded-lg p-3 text-sm font-mono resize-y focus:outline-none focus:border-cyan-500/50"
-            placeholder="Type your own review, email, support ticket…"
-          />
+      <div className="widget-body">
+        <div className="field-row">
+          {(Object.keys(TASKS) as Task[]).map((t) => (
+            <button key={t} className="chip" onClick={() => setTask(t)} aria-pressed={task === t}>
+              {t}
+            </button>
+          ))}
         </div>
 
-        <div className="bg-muted/50 border border-border rounded-lg p-4">
-          <div className="text-[11px] font-mono text-muted-foreground mb-3">PREDICTION · {task}</div>
-          {loading ? (
-            <div className="text-sm text-muted-foreground animate-pulse">classifying…</div>
-          ) : winner ? (
-            <div className="space-y-2">
-              <div
-                className={`font-mono text-2xl ${
-                  winner.label === "negative" || winner.label === "complaint"
-                    ? "text-red-400"
-                    : winner.label === "positive" || winner.label === "purchase" || winner.label === "request"
-                      ? "text-green-400"
-                      : "text-zinc-200"
-                }`}
-              >
-                {winner.label}
-              </div>
-              <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-green-500 via-cyan-500 to-purple-500 rounded-full"
-                  style={{ width: `${winnerConf * 100}%` }}
-                />
-              </div>
-              <div className="font-mono text-xs text-muted-foreground">confidence {(winnerConf * 100).toFixed(1)}%</div>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {TASKS[task].map((label) => (
-                  <span
-                    key={label}
-                    className={`text-xs font-mono px-2 py-1 rounded border ${
-                      label === winner.label
-                        ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-300"
-                        : "border-border text-muted-foreground"
-                    }`}
-                  >
-                    {label}
-                  </span>
-                ))}
-              </div>
+        <div className="split split-2" style={{ marginTop: 0 }}>
+          <div className="stack">
+            <div className="label-row">
+              <span className="label">Input text</span>
+              <span className="instrument">pick an example or edit it</span>
             </div>
-          ) : null}
+            <select
+              value={REVIEWS.includes(text) ? text : ""}
+              onChange={(e) => e.target.value && setText(e.target.value)}
+              className="field"
+              aria-label="Example text"
+            >
+              <option value="">custom text</option>
+              {REVIEWS.map((r) => (
+                <option key={r} value={r}>
+                  {r.length > 64 ? `${r.slice(0, 64)}…` : r}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={4}
+              className="field"
+              placeholder="Type your own review, email, support ticket…"
+            />
+          </div>
+
+          <div className="well">
+            <div className="label-row">
+              <span className="label">Prediction</span>
+              {loading && <span className="instrument">classifying</span>}
+            </div>
+            {winner ? (
+              <div style={{ marginTop: 12 }}>
+                <div className="stat-value" style={{ fontSize: 24 }}>
+                  {winner.label}
+                </div>
+                <div className="meter" style={{ marginTop: 10 }}>
+                  <span style={{ width: `${winnerConf * 100}%` }} />
+                </div>
+                <div className="instrument tnum" style={{ marginTop: 6 }}>
+                  confidence {(winnerConf * 100).toFixed(1)}%
+                </div>
+                <div className="field-row" style={{ marginTop: 16 }}>
+                  {TASKS[task].map((label) => (
+                    <span
+                      key={label}
+                      className="tag"
+                      style={
+                        label === winner.label
+                          ? { color: "var(--text)", borderColor: "var(--hairline-2)", background: "var(--raised)" }
+                          : undefined
+                      }
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="instrument" style={{ marginTop: 12 }}>
+                no prediction yet
+              </p>
+            )}
+          </div>
         </div>
       </div>
+
+      <Foot items={["fastino/gliner2-base-v1", "205M params", latency != null ? `${latency.toFixed(0)} ms` : null]} />
     </div>
   );
 }
