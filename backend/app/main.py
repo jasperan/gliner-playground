@@ -10,71 +10,117 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
+from .limits import RequestSizeLimitMiddleware
 from .models import MODEL_CATALOG, ModelBackend, get_model
 
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
 
+# Every dimension a caller controls is bounded here: without these constraints only `text`
+# and the entity label count were capped, so an unauthenticated request could expand an
+# arbitrary body into model prompt labels (see NEEDS-VALIDATION.md, run-1).
+MAX_TEXT_CHARS = 20_000
+MAX_LONG_TEXT_CHARS = 200_000
+MAX_LABEL_CHARS = 200
+MAX_FIELD_SPEC_CHARS = 500
+MAX_DESCRIPTION_CHARS = 2_000
+MAX_LABELS = 200
+MAX_FIELDS = 200
+MAX_MAP_ENTRIES = 50
+
+# Cap on the number of sliding windows one /api/entities-long request may run. A 200,000-char
+# document advances by at least window-overlap (1,750 chars), so it yields at most 115 chunks;
+# the cap pins that invariant so a future text bound cannot silently multiply inference work.
+MAX_CHUNKS = 128
+
+LabelName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_LABEL_CHARS)]
+FieldSpec = Annotated[str, StringConstraints(min_length=1, max_length=MAX_FIELD_SPEC_CHARS)]
+Description = Annotated[str, StringConstraints(max_length=MAX_DESCRIPTION_CHARS)]
+LabelList = Annotated[List[LabelName], Field(min_length=1, max_length=MAX_LABELS)]
+FieldSpecList = Annotated[List[FieldSpec], Field(min_length=1, max_length=MAX_FIELDS)]
+LabelMap = Annotated[Dict[LabelName, Description], Field(max_length=MAX_MAP_ENTRIES)]
+FieldMap = Annotated[Dict[LabelName, Description], Field(max_length=MAX_MAP_ENTRIES)]
+
 
 class EntitiesRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000, description="Input text")
-    labels: List[str] = Field(..., min_length=1, max_length=200, description="Entity types to search for")
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS, description="Input text")
+    labels: LabelList = Field(..., description="Entity types to search for")
     model: str = Field(MODEL_CATALOG["default"], description="Model identifier")
     threshold: float = Field(0.5, ge=0.0, le=1.0, description="Confidence threshold")
     include_spans: bool = True
 
 
 class ClassifyRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
-    tasks: Dict[str, List[str]] = Field(..., description="task -> candidate labels")
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+    tasks: Dict[LabelName, LabelList] = Field(
+        ..., max_length=MAX_MAP_ENTRIES, description="task -> candidate labels"
+    )
     model: str = Field(MODEL_CATALOG["default"])
     threshold: float = Field(0.5, ge=0.0, le=1.0)
 
 
 class StructuredRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
-    structures: Dict[str, List[str]] = Field(
-        ..., description="structure name -> ['field::dtype::description', ...]"
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+    structures: Dict[LabelName, FieldSpecList] = Field(
+        ..., max_length=MAX_MAP_ENTRIES,
+        description="structure name -> ['field::dtype::description', ...]",
     )
     model: str = Field(MODEL_CATALOG["default"])
     threshold: float = Field(0.5, ge=0.0, le=1.0)
 
 
 class RelationsRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
-    relation_types: List[str] = Field(..., min_length=1, description="Relation types (e.g. works_for)")
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+    relation_types: LabelList = Field(..., description="Relation types (e.g. works_for)")
     model: str = Field(MODEL_CATALOG["default"])
     threshold: float = Field(0.5, ge=0.0, le=1.0)
 
 
 class CombinedRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
     model: str = Field(MODEL_CATALOG["default"])
-    entities: Optional[Dict[str, str]] = None  # label -> description
-    classifications: Optional[Dict[str, List[str]]] = None  # task -> labels
-    structures: Optional[Dict[str, Dict[str, str]]] = None  # name -> field -> description
-    relations: Optional[Dict[str, str]] = None  # relation -> description
+    entities: Optional[LabelMap] = None  # label -> description
+    classifications: Optional[
+        Annotated[Dict[LabelName, LabelList], Field(max_length=MAX_MAP_ENTRIES)]
+    ] = None  # task -> labels
+    structures: Optional[
+        Annotated[Dict[LabelName, FieldMap], Field(max_length=MAX_MAP_ENTRIES)]
+    ] = None  # name -> field -> description
+    relations: Optional[LabelMap] = None  # relation -> description
     threshold: float = Field(0.5, ge=0.0, le=1.0)
 
 
-class CompareRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
-    labels: List[str] = Field(..., min_length=1)
+class _UniqueModels(BaseModel):
+    """Shared guard: repeating a model id multiplies work without changing the result."""
+
+    models: List[str]
+
+    @field_validator("models")
+    @classmethod
+    def _no_duplicate_ids(cls, value: List[str]) -> List[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("models must not repeat an id")
+        return value
+
+
+class CompareRequest(_UniqueModels):
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+    labels: LabelList = Field(...)
     models: List[str] = Field(..., min_length=2, max_length=len(MODEL_CATALOG["models"]))
     threshold: float = Field(0.5, ge=0.0, le=1.0)
 
 
-class BenchmarkRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20_000)
-    labels: List[str] = Field(..., min_length=1)
+class BenchmarkRequest(_UniqueModels):
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_CHARS)
+    labels: LabelList = Field(...)
     models: List[str] = Field(..., min_length=1, max_length=len(MODEL_CATALOG["models"]))
     iterations: int = Field(3, ge=1, le=20)
     threshold: float = Field(0.5, ge=0.0, le=1.0)
@@ -92,6 +138,10 @@ app = FastAPI(
 )
 
 _log = logging.getLogger("gliner.playground")
+
+# Reject oversized bodies before anything buffers or parses them. Registered before the CORS
+# middleware so CORS stays the outermost layer and even a 413 carries the allowlist headers.
+app.add_middleware(RequestSizeLimitMiddleware)
 
 # CORS origins from env (comma-separated). Defaults are local-dev friendly; set
 # GLINER_ALLOWED_ORIGINS to your deployed site origin(s) before public hosting.
@@ -176,21 +226,21 @@ def _require_gliner2(model: str) -> ModelBackend:
 @app.post("/api/entities")
 def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
     backend = _resolve_model(req.model)
-    backend.ensure_loaded()
+    model = backend.ensure_loaded()
     t0 = time.perf_counter()
 
     # Honest truncation signal: report when the input exceeds the 512-token
     # window the model actually sees, instead of silently dropping the tail.
     truncated = False
     try:
-        tokenizer = getattr(getattr(backend.model, "processor", None), "tokenizer", None)
+        tokenizer = getattr(getattr(model, "processor", None), "tokenizer", None)
         if tokenizer is not None and req.text:
             truncated = len(tokenizer.encode(req.text, add_special_tokens=False)) > 512
     except Exception:  # pragma: no cover — tokenizer is best-effort
         truncated = False
 
     if backend.family == "gliner2":
-        raw = backend.model.extract_entities(
+        raw = model.extract_entities(
             req.text, req.labels, threshold=req.threshold,
             include_confidence=True, include_spans=req.include_spans, max_len=512,
         )
@@ -205,7 +255,7 @@ def extract_entities(req: EntitiesRequest) -> Dict[str, Any]:
                     "end": h.get("end"),
                 })
     else:
-        raw = backend.model.predict_entities(
+        raw = model.predict_entities(
             req.text, req.labels, threshold=req.threshold, flat_ner=True,
         )
         entities = [
@@ -245,7 +295,6 @@ def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
     Only GLiNER2 models are supported; GLiNER models get a 422 with a hint.
     """
     backend = _require_gliner2(req.model)
-    backend.ensure_loaded()
 
     # Chunk on ~2000-char windows with ~250-char overlap at sentence breaks so
     # entities at chunk edges are seen twice (merged below). Each chunk records
@@ -266,10 +315,20 @@ def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
             chunks.append((req.text[start:end], start))
             start = end - overlap if end < len(req.text) else len(req.text)
 
+    if len(chunks) > MAX_CHUNKS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Document splits into {len(chunks)} chunks, over the {MAX_CHUNKS}-chunk "
+                "limit; send a shorter text"
+            ),
+        )
+
     t0 = time.perf_counter()
+    model = backend.ensure_loaded()
     merged: Dict[tuple, Dict[str, Any]] = {}
     for chunk_idx, (chunk, base) in enumerate(chunks):
-        raw = backend.model.extract_entities(
+        raw = model.extract_entities(
             chunk, req.labels, threshold=req.threshold,
             include_confidence=True, include_spans=True, max_len=512,
         )
@@ -303,9 +362,9 @@ def extract_entities_long(req: LongEntitiesRequest) -> Dict[str, Any]:
 @app.post("/api/classify")
 def classify(req: ClassifyRequest) -> Dict[str, Any]:
     backend = _require_gliner2(req.model)
-    backend.ensure_loaded()
+    model = backend.ensure_loaded()
     t0 = time.perf_counter()
-    raw = backend.model.classify_text(
+    raw = model.classify_text(
         req.text, req.tasks, threshold=req.threshold, include_confidence=True, max_len=512,
     )
     results = []
@@ -333,9 +392,9 @@ def classify(req: ClassifyRequest) -> Dict[str, Any]:
 @app.post("/api/structured")
 def structured(req: StructuredRequest) -> Dict[str, Any]:
     backend = _require_gliner2(req.model)
-    backend.ensure_loaded()
+    model = backend.ensure_loaded()
     t0 = time.perf_counter()
-    raw = backend.model.extract_json(
+    raw = model.extract_json(
         req.text, req.structures, threshold=req.threshold, include_confidence=True, max_len=512,
     )
     return {
@@ -348,9 +407,9 @@ def structured(req: StructuredRequest) -> Dict[str, Any]:
 @app.post("/api/relations")
 def relations(req: RelationsRequest) -> Dict[str, Any]:
     backend = _require_gliner2(req.model)
-    backend.ensure_loaded()
+    model = backend.ensure_loaded()
     t0 = time.perf_counter()
-    raw = backend.model.extract_relations(
+    raw = model.extract_relations(
         req.text, req.relation_types, threshold=req.threshold,
         include_confidence=True, max_len=512,
     )
@@ -385,10 +444,10 @@ def combined(req: CombinedRequest) -> Dict[str, Any]:
     """Multi-task extraction: entities + classification + structured + relations
     in a single forward pass."""
     backend = _require_gliner2(req.model)
-    backend.ensure_loaded()
+    model = backend.ensure_loaded()
     t0 = time.perf_counter()
 
-    schema = backend.model.create_schema()
+    schema = model.create_schema()
     if req.entities:
         schema = schema.entities(req.entities)
     if req.classifications:
@@ -403,8 +462,8 @@ def combined(req: CombinedRequest) -> Dict[str, Any]:
     if req.relations:
         schema = schema.relations(req.relations)
 
-    raw = backend.model.extract(req.text, schema, threshold=req.threshold,
-                                include_confidence=True, max_len=512)
+    raw = model.extract(req.text, schema, threshold=req.threshold,
+                        include_confidence=True, max_len=512)
     return {
         "model": req.model,
         "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
@@ -418,10 +477,10 @@ def compare(req: CompareRequest) -> Dict[str, Any]:
     rows = []
     for mid in req.models:
         backend = _resolve_model(mid)
-        backend.ensure_loaded()
+        model = backend.ensure_loaded()
         t0 = time.perf_counter()
         if backend.family == "gliner2":
-            raw = backend.model.extract_entities(
+            raw = model.extract_entities(
                 req.text, req.labels, threshold=req.threshold, include_confidence=True, max_len=512,
             )
             found = []
@@ -429,7 +488,7 @@ def compare(req: CompareRequest) -> Dict[str, Any]:
                 for h in hits:
                     found.append((label, h.get("text"), h.get("confidence"), h.get("start"), h.get("end")))
         else:
-            raw = backend.model.predict_entities(req.text, req.labels, threshold=req.threshold, flat_ner=True)
+            raw = model.predict_entities(req.text, req.labels, threshold=req.threshold, flat_ner=True)
             found = [(e["label"], e["text"], e["score"], e.get("start"), e.get("end")) for e in raw]
         rows.append({
             "model": mid,
@@ -449,19 +508,19 @@ def benchmark(req: BenchmarkRequest) -> Dict[str, Any]:
     out = []
     for mid in req.models:
         backend = _resolve_model(mid)
-        backend.ensure_loaded()
+        model = backend.ensure_loaded()
         # warmup
         if backend.family == "gliner2":
-            backend.model.extract_entities(req.text, req.labels, threshold=0.5, max_len=512)
+            model.extract_entities(req.text, req.labels, threshold=0.5, max_len=512)
         else:
-            backend.model.predict_entities(req.text, req.labels, threshold=0.5)
+            model.predict_entities(req.text, req.labels, threshold=0.5)
         times = []
         for _ in range(req.iterations):
             t0 = time.perf_counter()
             if backend.family == "gliner2":
-                backend.model.extract_entities(req.text, req.labels, threshold=req.threshold, max_len=512)
+                model.extract_entities(req.text, req.labels, threshold=req.threshold, max_len=512)
             else:
-                backend.model.predict_entities(req.text, req.labels, threshold=req.threshold)
+                model.predict_entities(req.text, req.labels, threshold=req.threshold)
             times.append((time.perf_counter() - t0) * 1000)
         out.append({
             "model": mid,

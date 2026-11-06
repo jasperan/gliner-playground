@@ -95,11 +95,18 @@ class ModelBackend:
         return self.info.family
 
     def ensure_loaded(self):
-        if self.model is not None:
-            return
+        """Return the loaded model, loading it on first use.
+
+        Returning the object (instead of only setting `self.model`) lets a caller hold its own
+        reference, so an eviction elsewhere in the registry cannot pull the weights out from
+        under an in-flight request.
+        """
+        model = self.model
+        if model is not None:
+            return model
         with self._lock:
             if self.model is not None:
-                return
+                return self.model
             if self.family == "gliner":
                 from gliner import GLiNER
 
@@ -114,6 +121,12 @@ class ModelBackend:
                 if torch.cuda.is_available():
                     m = m.to("cuda")
                 self.model = m
+            return self.model
+
+    def unload(self) -> None:
+        """Drop the loaded weights so the next ensure_loaded reloads them."""
+        with self._lock:
+            self.model = None
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<ModelBackend {self.model_id} loaded={self.model is not None}>"
@@ -123,10 +136,33 @@ _loaders: Dict[str, ModelBackend] = {}
 _loaders_lock = threading.Lock()
 
 
+def max_loaded_models() -> int:
+    """Resident-model ceiling from `GLINER_MAX_LOADED_MODELS`; 0 (the default) means no ceiling.
+
+    With no ceiling every model that has been loaded stays resident for the process lifetime,
+    which keeps the documented five-model `/api/compare` warm but pins the whole catalog in
+    memory. On a shared or memory-tight device an operator can set this to bound the footprint;
+    the least recently resolved model is unloaded when the ceiling is crossed.
+    """
+    raw = os.environ.get("GLINER_MAX_LOADED_MODELS")
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0
+    return max(0, value)
+
+
 def get_model(model_id: str) -> ModelBackend:
     if model_id not in _MODELS:
         raise KeyError(f"Unknown model '{model_id}'")
     with _loaders_lock:
-        if model_id not in _loaders:
-            _loaders[model_id] = ModelBackend(model_id)
-        return _loaders[model_id]
+        backend = _loaders.pop(model_id, None) or ModelBackend(model_id)
+        # Re-inserting keeps _loaders ordered from least to most recently resolved.
+        _loaders[model_id] = backend
+        ceiling = max_loaded_models()
+        while ceiling and len(_loaders) > ceiling:
+            oldest_id = next(iter(_loaders))
+            _loaders.pop(oldest_id).unload()
+        return backend
